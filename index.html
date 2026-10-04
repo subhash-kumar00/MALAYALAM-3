@@ -132,7 +132,7 @@
       <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-2xl text-center space-y-5">
         
         <div class="flex justify-end">
-          <button type="button" onclick="returnToHomeWithData()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black rounded-xl text-xs transition shadow flex items-center space-x-1.5">
+          <button type="button" onclick="returnToHomeWithData()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black rounded-xl text-xs transition shadow flex items-center space-x-1.5 cursor-pointer">
             <span>🏠</span>
             <span>ഹോം പേജിലേക്ക് മടങ്ങുക (Save Result)</span>
           </button>
@@ -198,7 +198,7 @@
             📊 ലൈവ് റാങ്ക് ലിസ്റ്റ് കാണുക
           </button>
 
-          <button type="button" onclick="returnToHomeWithData()" class="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-sm transition flex items-center space-x-1.5">
+          <button type="button" onclick="returnToHomeWithData()" class="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-sm transition flex items-center space-x-1.5 cursor-pointer">
             <span>🏠</span>
             <span>ഹോം പോർട്ടൽ</span>
           </button>
@@ -277,6 +277,7 @@
     const FIREBASE_DB_URL = "https://sk-psc-portal-default-rtdb.asia-southeast1.firebasedatabase.app";
     let ORIGINAL_PDF_URL = "https://docs.google.com/document/d/YOUR_GOOGLE_DOC_ID/export?format=pdf";
     let examTitle = "പദശുദ്ധി, വാക്യശുദ്ധി & ശൈലികൾ - സെറ്റ് 3";
+    let currentExamKey = "padashudhi_vakhyashudhi_set_3";
 
     const questionsData = [
       {
@@ -439,9 +440,9 @@
 
     const fontSizes = [
       { q: "text-sm sm:text-base" },
-      { q: "text-base sm:text-lg" },
-      { q: "text-lg sm:text-xl" },
-      { q: "text-xl sm:text-2xl" }
+      { text: "text-base sm:text-lg" },
+      { text: "text-lg sm:text-xl" },
+      { text: "text-xl sm:text-2xl" }
     ];
 
     let timeLeft = 25 * 60;
@@ -453,7 +454,13 @@
 
     function cleanTitleForMatch(str) {
       if (!str) return "";
-      return String(str).replace(/[\s\-_,.:;()\/\\|\[\]]+/g, '').toLowerCase();
+      return String(str).replace(/[\s\-_,.:;()\/\\|\[\]+&]+/g, '').toLowerCase();
+    }
+
+    function sanitizePhone(rawPhone) {
+      if (!rawPhone) return "";
+      let clean = String(rawPhone).replace(/\D/g, '');
+      return clean.length >= 10 ? clean.slice(-10) : clean;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -462,17 +469,43 @@
       const passedPhone = urlParams.get('phone');
       const passedTitle = urlParams.get('title');
       const passedPdf = urlParams.get('pdfUrl');
+      const passedKey = urlParams.get('key');
+
+      if (passedKey && passedKey.trim() !== '') {
+        currentExamKey = passedKey.trim();
+      }
 
       if (passedName && passedName.trim() !== '') {
         currentUser.name = decodeURIComponent(passedName).trim();
       } else {
         try {
-          const storedUser = localStorage.getItem('sk_user_name');
-          if (storedUser && storedUser.trim() !== '') currentUser.name = storedUser.trim();
+          const storedUser = localStorage.getItem('sk_user_name') || localStorage.getItem('sk_candidate_user');
+          if (storedUser) {
+            try {
+              const u = JSON.parse(storedUser);
+              if (u.name) currentUser.name = u.name;
+            } catch(e) {
+              currentUser.name = storedUser.trim();
+            }
+          }
         } catch (e) {}
       }
 
-      if (passedPhone) currentUser.phone = decodeURIComponent(passedPhone);
+      if (passedPhone && passedPhone.trim() !== '') {
+        currentUser.phone = sanitizePhone(decodeURIComponent(passedPhone));
+      } else {
+        try {
+          const stored = localStorage.getItem('sk_candidate_user') || localStorage.getItem('sk_user_phone');
+          if (stored) {
+            try {
+              const u = JSON.parse(stored);
+              if (u.phone) currentUser.phone = sanitizePhone(u.phone);
+            } catch(e) {
+              currentUser.phone = sanitizePhone(stored);
+            }
+          }
+        } catch (e) {}
+      }
       
       if (passedTitle) {
         examTitle = decodeURIComponent(passedTitle).trim();
@@ -485,7 +518,7 @@
 
       const displayElem = document.getElementById('displayUser');
       if (displayElem) {
-        displayElem.innerText = (currentUser.phone && currentUser.phone !== "0000000000")
+        displayElem.innerText = (currentUser.phone && currentUser.phone.length === 10)
           ? `${currentUser.name} (+91 ${currentUser.phone})`
           : currentUser.name;
       }
@@ -512,20 +545,33 @@
       }
     });
 
-    // 🌟 ഫയർബേസിൽ നിന്ന് മുൻപത്തെ അറ്റംപ്റ്റ് എടുത്തു കാണിക്കുന്നു
+    // 🌟 ഫയർബേസിൽ നിന്ന് മുൻപത്തെ അറ്റംപ്റ്റ് കൃത്യമായി എടുത്തു കാണിക്കുന്നു
     async function loadPreviousAttemptFromFirebase() {
       let prevScore = 0, prevCorrect = 0, prevWrong = 0, prevSkipped = 0;
+      let studentPhone = sanitizePhone(currentUser.phone);
 
-      if (currentUser.phone && currentUser.phone !== "0000000000") {
+      if (studentPhone && studentPhone.length === 10) {
         try {
-          const res = await fetch(`${FIREBASE_DB_URL}/users_history/${currentUser.phone}.json`);
+          const res = await fetch(`${FIREBASE_DB_URL}/users_history/${studentPhone}.json?_t=${Date.now()}`);
           const data = await res.json();
           if (data) {
-            const hList = Object.values(data);
+            let matched = null;
             const cleanT = cleanTitleForMatch(examTitle);
-            const matched = hList.slice().reverse().find(h => cleanTitleForMatch(h.title) === cleanT);
+
+            if (data[cleanT]) {
+              matched = data[cleanT];
+            } else if (data[currentExamKey]) {
+              matched = data[currentExamKey];
+            } else {
+              const hList = Object.values(data);
+              matched = hList.slice().reverse().find(h => {
+                let ct = cleanTitleForMatch(h.title || '');
+                return ct === cleanT || cleanT.includes(ct) || ct.includes(cleanT);
+              });
+            }
+
             if (matched) {
-              prevScore = Number(matched.score || 0);
+              prevScore = Number(matched.score !== undefined ? matched.score : (matched.MARK || 0));
               prevCorrect = matched.correct || 0;
               prevWrong = matched.wrong || 0;
               prevSkipped = matched.skipped || 0;
@@ -653,7 +699,6 @@
       handleReportQuestion(currentIndex + 1);
     });
 
-    // 🌟 ചോദ്യത്തിലെ സംശയം നേരിട്ട് ഫയർബേസിലേക്ക് റിപ്പോർട്ട് ചെയ്യുന്നു
     async function handleReportQuestion(qNum) {
       const reason = prompt(`ചോദ്യം ${qNum} ൽ എന്തെങ്കിലും തെറ്റുകൾ ഉണ്ടെങ്കിൽ ദയവായി താഴെ രേഖപ്പെടുത്തുക:`);
       if (reason && reason.trim()) {
@@ -804,49 +849,109 @@
       });
     }
 
-    // 🌟 ഫയർബേസിലേക്ക് മാർക്കുകൾ തത്സമയം സേവ് ചെയ്യുന്നു
+    // 🌟 live_ranks, ranks എന്നിവയിൽ ആദ്യ അറ്റംപ്റ്റ് മാത്രം സേവ് ചെയ്യുന്നതും users_history-ൽ PATCH വഴി സേവ് ചെയ്യുന്നതുമായ ഫംഗ്ഷൻ
     async function sendResultToFirebase(payload) {
       const statusDiv = document.getElementById('sheetStatus');
-      if (!payload.phone || payload.phone === "0000000000") {
-        statusDiv.innerText = "✓ മാർക്ക് സ്ക്രീനിൽ ലഭ്യമാണ് (ലോഗിൻ ചെയ്തിട്ടില്ല).";
-        statusDiv.classList.remove('animate-pulse');
-        return;
+
+      let studentPhone = sanitizePhone(payload.phone || currentUser.phone);
+      let studentName = payload.name || currentUser.name || 'വിദ്യാർത്ഥി';
+
+      if (!studentPhone || studentPhone.length < 10) {
+        try {
+          const stored = localStorage.getItem('sk_candidate_user');
+          if (stored) {
+            const u = JSON.parse(stored);
+            if (u.phone) studentPhone = sanitizePhone(u.phone);
+          }
+        } catch(e) {}
       }
 
-      const cleanExamKey = cleanTitleForMatch(examTitle);
+      if (!studentPhone || studentPhone.length < 10) {
+        studentPhone = "9999999999"; 
+      }
+
       const todayDate = new Date().toISOString().split('T')[0];
+      // ഡ്യൂപ്ലിക്കേഷൻ ഇല്ലാതെ ഒരൊറ്റ സ്ഥിരമായ കീ ഉപയോഗിക്കുന്നു
+      const primaryKey = cleanTitleForMatch(examTitle) || currentExamKey;
+
+      const record = {
+        title: examTitle,
+        name: String(studentName),
+        phone: String(studentPhone),
+        Official_Name: String(studentName),
+        Phone: String(studentPhone),
+        score: parseFloat(payload.score),
+        MARK: parseFloat(payload.score),
+        correct: parseInt(payload.correct),
+        wrong: parseInt(payload.wrong),
+        skipped: parseInt(payload.skipped),
+        date: todayDate,
+        timestamp: Date.now()
+      };
+
+      const jsonBody = JSON.stringify(record);
 
       try {
-        await fetch(`${FIREBASE_DB_URL}/ranks/${cleanExamKey}/${payload.phone}.json`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: payload.name,
-            phone: payload.phone,
-            score: payload.score,
-            date: todayDate
-          })
-        });
+        if (statusDiv) {
+          statusDiv.innerText = "സ്കോർ ഫയർബേസിലേക്ക് രേഖപ്പെടുത്തുന്നു...";
+          statusDiv.className = "text-xs text-cyan-400 animate-pulse font-medium";
+        }
 
-        await fetch(`${FIREBASE_DB_URL}/users_history/${payload.phone}.json`, {
-          method: 'POST',
+        const fetchOptions = {
+          method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: examTitle,
-            score: payload.score,
-            correct: payload.correct,
-            wrong: payload.wrong,
-            skipped: payload.skipped,
-            date: todayDate,
-            timestamp: Date.now()
-          })
-        });
+          body: jsonBody,
+          keepalive: true
+        };
 
-        statusDiv.innerText = "✓ മാർക്ക് ഫയർബേസിൽ വിജയകരമായി രേഖപ്പെടുത്തി!";
-        statusDiv.className = "text-xs text-emerald-400 mb-4";
+        // 🌟 1. വിദ്യാർത്ഥിക്ക് ഈ പരീക്ഷയിൽ മുമ്പ് സ്കോർ ഉണ്ടോ എന്ന് പരിശോധിക്കുന്നു (First Attempt Lock)
+        const checkLiveRes = await fetch(`${FIREBASE_DB_URL}/live_ranks/${primaryKey}/${studentPhone}.json`).catch(() => null);
+        const liveData = checkLiveRes ? await checkLiveRes.json() : null;
+
+        const isFirstAttempt = (!liveData || liveData.score === undefined);
+
+        let saveTasks = [];
+
+        // ആദ്യ ശ്രമമാണെങ്കിൽ മാത്രം live_ranks ലേക്കും ranks ലേക്കും സേവ് ആകുന്നു (Reattempt ഓവർറൈറ്റ് ചെയ്യില്ല!)
+        if (isFirstAttempt) {
+          saveTasks.push(
+            fetch(`${FIREBASE_DB_URL}/live_ranks/${primaryKey}/${studentPhone}.json`, fetchOptions),
+            fetch(`${FIREBASE_DB_URL}/ranks/${primaryKey}/${studentPhone}.json`, fetchOptions)
+          );
+        }
+
+        // 🌟 2. വിദ്യാർത്ഥിയുടെ പ്രൊഫൈൽ ഹിസ്റ്ററിയിലേക്ക് (users_history) PATCH വഴി ഒരൊറ്റ പ്രാവശ്യം മാത്രം സേവ് ചെയ്യുന്നു (ഡ്യൂപ്ലിക്കേഷൻ ഒഴിവാക്കി)
+        saveTasks.push(
+          fetch(`${FIREBASE_DB_URL}/users_history/${studentPhone}/${primaryKey}.json`, fetchOptions)
+        );
+
+        // 🌟 3. യൂസർ പ്രൊഫൈലിലേക്ക് വിവരങ്ങൾ നിലനിർത്തുന്നു
+        saveTasks.push(
+          fetch(`${FIREBASE_DB_URL}/users/${studentPhone}.json`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              Official_Name: studentName,
+              Phone: studentPhone
+            }),
+            keepalive: true
+          })
+        );
+
+        await Promise.all(saveTasks);
+
+        if (statusDiv) {
+          statusDiv.innerText = isFirstAttempt
+            ? "✓ ആദ്യ ശ്രമത്തിലെ മാർക്ക് റാങ്ക് ലിസ്റ്റിലും പ്രൊഫൈലിലും രേഖപ്പെടുത്തി!"
+            : "✓ Reattempt പൂർത്തിയായി (പ്രൊഫൈൽ ഹിസ്റ്ററിയിൽ ചേർത്തു, റാങ്ക് ലിസ്റ്റിൽ ആദ്യ ശ്രമം നിലനിർത്തി).";
+          statusDiv.className = "text-xs text-emerald-400 font-semibold mb-4";
+        }
       } catch (err) {
-        statusDiv.innerText = "ഡാറ്റ സേവ് ചെയ്യുന്നതിൽ ചെറിയ തടസ്സം നേരിട്ടു.";
-        statusDiv.className = "text-xs text-rose-400 mb-4";
+        console.error("Firebase sync error:", err);
+        if (statusDiv) {
+          statusDiv.innerText = "സ്കോർ രേഖപ്പെടുത്തുന്നതിൽ ചെറിയ തടസ്സം നേരിട്ടു.";
+          statusDiv.className = "text-xs text-rose-400 mb-4";
+        }
       }
     }
 
@@ -943,7 +1048,7 @@
     // 🌟 ഫീഡ്ബാക്ക് ഫയർബേസിലേക്ക് അയക്കുന്നു
     async function recordFeedbackAndOpenDownload(feedbackVal) {
       document.getElementById('feedbackModal').classList.add('hidden');
-      if (currentUser.phone && currentUser.phone !== "0000000000") {
+      if (currentUser.phone && currentUser.phone.length === 10) {
         try {
           await fetch(`${FIREBASE_DB_URL}/feedbacks.json`, {
             method: 'POST',
@@ -1101,11 +1206,17 @@
       wrapper.classList.add('hidden');
       tbody.innerHTML = '';
 
-      const cleanKey = cleanTitleForMatch(examTitle);
+      const primaryKey = cleanTitleForMatch(examTitle) || currentExamKey;
 
       try {
-        const res = await fetch(`${FIREBASE_DB_URL}/ranks/${cleanKey}.json`);
-        const data = await res.json();
+        let res = await fetch(`${FIREBASE_DB_URL}/live_ranks/${primaryKey}.json?_t=${Date.now()}`);
+        let data = await res.json();
+
+        if (!data) {
+          res = await fetch(`${FIREBASE_DB_URL}/ranks/${primaryKey}.json?_t=${Date.now()}`);
+          data = await res.json();
+        }
+
         loader.classList.add('hidden');
         wrapper.classList.remove('hidden');
 
@@ -1115,20 +1226,20 @@
         }
 
         let ranks = Object.values(data);
-        ranks.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+        ranks.sort((a, b) => Number(b.score !== undefined ? b.score : (b.MARK || 0)) - Number(a.score !== undefined ? a.score : (a.MARK || 0)));
 
         ranks.forEach((entry, idx) => {
-          let phoneStr = String(entry.phone || '').replace(/[^0-9]/g, '');
-          if (phoneStr.length >= 10) phoneStr = phoneStr.slice(-10);
-          const masked = (phoneStr && phoneStr.length >= 5) ? phoneStr.substring(0, 5) + '*****' : '---';
+          let phoneStr = sanitizePhone(entry.phone || entry.Phone);
+          const masked = (phoneStr && phoneStr.length >= 10) ? phoneStr.substring(0, 3) + '••••' + phoneStr.substring(7) : '---';
+          let markVal = Number(entry.score !== undefined ? entry.score : (entry.MARK || 0));
 
           const row = document.createElement('tr');
           row.className = 'hover:bg-slate-700/30 text-slate-300';
           row.innerHTML = `
             <td class="py-2.5 px-3 font-mono font-bold">${idx + 1}</td>
-            <td class="py-2.5 px-3 font-medium">${entry.name || 'വിദ്യാർത്ഥി'}</td>
+            <td class="py-2.5 px-3 font-medium">${entry.name || entry.Official_Name || 'വിദ്യാർത്ഥി'}</td>
             <td class="py-2.5 px-3 font-mono text-xs text-slate-400">${masked}</td>
-            <td class="py-2.5 px-3 text-right font-mono font-bold text-cyan-400">${Number(entry.score || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 text-right font-mono font-bold text-cyan-400">${markVal.toFixed(2)}</td>
           `;
           tbody.appendChild(row);
         });
@@ -1148,7 +1259,7 @@
       const wrong = document.getElementById('wrongCount').innerText;
       const skipped = document.getElementById('skipCount').innerText;
 
-      window.location.href = `${homePortalUrl}?completed=true&title=${encodeURIComponent(examTitle)}&score=${score}&correct=${correct}&wrong=${wrong}&skipped=${skipped}`;
+      window.location.href = `${homePortalUrl}?completed=true&key=${encodeURIComponent(currentExamKey)}&title=${encodeURIComponent(examTitle)}&score=${score}&correct=${correct}&wrong=${wrong}&skipped=${skipped}`;
     }
   </script>
 </body>
